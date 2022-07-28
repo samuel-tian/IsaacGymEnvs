@@ -1,0 +1,45 @@
+name: TestEnv
+
+physics_engine: ${..physics_engine}
+
+# if given, will override the device setting in gym. 
+env:
+  numEnvs: ${resolve_default:256,${...num_envs}}
+  envSpacing: 1.5
+  episodeLength: 100
+  enableDebugVis: False
+
+  startPositionNoise: 0.0
+  startRotationNoise: 0.0
+  dvrkDofNoise: 0.0
+
+  actionScale: 7.5
+  dofVelocityScale: 0.1
+  distRewardScale: 1.5
+  rotRewardScale: 0.5
+  aroundHandleRewardScale: 1.0
+  openRewardScale: 4.0
+  fingerDistRewardScale: 10.0
+  actionPenaltyScale: 0.01
+
+sim:
+  dt: 0.0166
+  substeps: 2
+  up_axis: "z"
+  use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
+  gravity: [0.0, 0.0, -9.81]
+  physx:
+    num_threads: ${....num_threads}
+    solver_type: ${....solver_type}
+    use_gpu: ${contains:"cuda",${....sim_device}}
+    num_position_iterations: 12
+    num_velocity_iterations: 1
+    contact_offset: 0.005
+    rest_offset: 0.0
+    bounce_threshold_velocity: 0.2
+    max_depenetration_velocity: 1000.0
+    default_buffer_size_multiplier: 5.0
+    always_use_articulations: False
+  
+task:
+  randomize: False
