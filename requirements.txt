@@ -1,0 +1,17 @@
+gym==0.24.1
+horovod==0.25.0
+hydra-core==1.2.0
+isaacgym.egg==info
+matplotlib==3.5.2
+numpy==1.22.4
+omegaconf==2.2.2
+PyVirtualDisplay==3.0
+rl_games==1.5.2
+rl_games.egg==info
+roslib==1.15.8
+scipy==1.8.1
+setuptools==63.2.0
+tensorboard_logger==0.1.0
+tensorboardX==2.5.1
+torch==1.11.0
+wandb==0.12.21
