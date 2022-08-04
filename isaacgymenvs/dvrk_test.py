@@ -27,6 +27,7 @@ args = gymutil.parse_arguments(description = "DVRK Import Test",
                                     "default": 1,
                                     "help": "Number of environments to create"},
                                ])
+args.physics_engine = gymapi.SIM_FLEX
 
 # Initialize gym
 gym = gymapi.acquire_gym()
@@ -36,18 +37,25 @@ sim_params = gymapi.SimParams()
 sim_params.up_axis = gymapi.UP_AXIS_Z
 sim_params.gravity = gymapi.Vec3(0.0, 0.0, -9.8)
 sim_params.dt = 1.0 / 60.0
-sim_params.substeps = 2
-if args.physics_engine == gymapi.SIM_PHYSX:
-    sim_params.physx.solver_type = 1
-    sim_params.physx.num_position_iterations = 4
-    sim_params.physx.num_velocity_iterations = 1
-    sim_params.physx.num_threads = args.num_threads
-    sim_params.physx.use_gpu = args.use_gpu
-else:
-    raise Exception("This example can only be used with PhysX")
+sim_params.substeps = 10
+sim_params.flex.solver_type = 5
+sim_params.flex.num_outer_iterations = 4
+sim_params.flex.num_inner_iterations = 20
+sim_params.flex.relaxation = 0.75
+sim_params.flex.warm_start = 0.4
+sim_params.flex.shape_collision_margin = 0.1
+sim_params.physx.solver_type = 1
+sim_params.physx.num_position_iterations = 4
+sim_params.physx.num_velocity_iterations = 1
+sim_params.physx.num_threads = args.num_threads
+sim_params.physx.use_gpu = args.use_gpu
 
-sim_params.use_gpu_pipeline = args.use_gpu_pipeline
+# enable Von-Mises stress visualization
+sim_params.stress_visualization = True
+sim_params.stress_visualization_min = 0.0
+sim_params.stress_visualization_max = 1.e+5
 
+sim_params.use_gpu_pipeline = False
 sim = gym.create_sim(args.compute_device_id, args.graphics_device_id, args.physics_engine, sim_params)
 
 if sim is None:
@@ -63,11 +71,12 @@ plane_params = gymapi.PlaneParams()
 plane_params.normal = gymapi.Vec3(0, 0, 1)
 gym.add_ground(sim, plane_params)
 
-# Load dvrk asset
 asset_root = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "../assets/urdf")
-dvrk_asset_file = "dvrk_description/psm/psm_for_issacgym.urdf"
+    "../assets/")
+dvrk_asset_file = "urdf/dvrk_description/psm/psm_for_issacgym.urdf"
+# dvrk_asset_file = "urdf/franka_description/robots/franka_panda.urdf"
+soft_asset_file = "urdf/box.urdf"
 
 asset_options = gymapi.AssetOptions()
 asset_options.fix_base_link = True
@@ -76,29 +85,43 @@ asset_options.armature = 0.01
 asset_options.disable_gravity = True
 asset_options.override_com = True
 asset_options.override_inertia = True
-
 print("Loading asset '%s' from '%s'" % (dvrk_asset_file, asset_root))
 dvrk_asset = gym.load_asset(
     sim, asset_root, dvrk_asset_file, asset_options)
+
+soft_thickness = 0.1
+asset_options = gymapi.AssetOptions()
+asset_options.fix_base_link = True
+asset_options.thickness = soft_thickness
+asset_options.default_dof_drive_mode = gymapi.DOF_MODE_POS
+print("Loading asset '%s' from '%s'" % (soft_asset_file, asset_root))
+soft_asset = gym.load_asset(
+    sim, asset_root, soft_asset_file, asset_options)
+
+asset_soft_body_count = gym.get_asset_soft_body_count(soft_asset)
+asset_soft_materials = gym.get_asset_soft_materials(soft_asset)
+print('Soft Material Properties:')
+for i in range(asset_soft_body_count):
+    mat = asset_soft_materials[i]
+    print(f'(Body {i}) youngs: {mat.youngs} poissons: {mat.poissons} damping: {mat.damping}')
 
 # get joint limits and ranges for dvrk
 dvrk_dof_props = gym.get_asset_dof_properties(dvrk_asset)
 dvrk_lower_limits = dvrk_dof_props['lower']
 dvrk_upper_limits = dvrk_dof_props['upper']
-print(dvrk_upper_limits)
-print(dvrk_lower_limits)
-dvrk_ranges = dvrk_upper_limits - dvrk_lower_limits
+for i in (zip(dvrk_lower_limits, dvrk_upper_limits)):
+    print(i)
 dvrk_mids = 0.5 * (dvrk_upper_limits + dvrk_lower_limits)
 dvrk_num_dofs = len(dvrk_dof_props)
 
 # set default DOF states
 default_dof_state = np.zeros(dvrk_num_dofs, gymapi.DofState.dtype)
-default_dof_state["pos"][:7] = dvrk_mids[:7]
+default_dof_state["pos"][:] = dvrk_mids[:]
 
 # set DOF control properties (except grippers)
-dvrk_dof_props["driveMode"][:8].fill(gymapi.DOF_MODE_EFFORT)
-dvrk_dof_props["stiffness"][:8].fill(0.0)
-dvrk_dof_props["damping"][:8].fill(0.0)
+dvrk_dof_props["driveMode"][:].fill(gymapi.DOF_MODE_EFFORT)
+dvrk_dof_props["stiffness"][:].fill(100.0)
+dvrk_dof_props["damping"][:].fill(100.0)
 
 # set DOF control properties for grippers
 dvrk_dof_props["driveMode"][8:].fill(gymapi.DOF_MODE_POS)
@@ -108,7 +131,7 @@ dvrk_dof_props["damping"][8:].fill(40.0)
 # Set up the env grid
 num_envs = args.num_envs
 num_per_row = int(math.sqrt(num_envs))
-spacing = 1.0
+spacing = 10.0
 env_lower = gymapi.Vec3(-spacing, -spacing, 0.0)
 env_upper = gymapi.Vec3(spacing, spacing, spacing)
 
@@ -117,10 +140,14 @@ pose = gymapi.Transform()
 pose.p = gymapi.Vec3(0, 0, 0)
 pose.r = gymapi.Quat(0, 0, 0, 1)
 
+soft_pose = gymapi.Transform()
+soft_pose.p = gymapi.Vec3(0, 0, 0)
+soft_pose.r = gymapi.Quat(0, 0, 0, 1)
+
 print("Creating %d environments" % num_envs)
 
 envs = []
-hand_idxs = []
+handles = []
 
 for i in range(num_envs):
     # Create env
@@ -129,46 +156,27 @@ for i in range(num_envs):
 
     # Add dvrk
     dvrk_handle = gym.create_actor(env, dvrk_asset, pose, "dvrk", i, 1)
-
-    # Set initial DOF states
+    handles.append(dvrk_handle)
     gym.set_actor_dof_states(env, dvrk_handle, default_dof_state, gymapi.STATE_ALL)
-
-    # Set DOF control properties
     gym.set_actor_dof_properties(env, dvrk_handle, dvrk_dof_props)
 
+    # add soft object
+    # soft_handle = gym.create_actor(env, soft_asset, soft_pose, "soft", i, 2)
+
 # Point camera at middle env
-cam_pos = gymapi.Vec3(4, 3, 3)
-cam_target = gymapi.Vec3(-4, -3, 0)
+cam_pos = gymapi.Vec3(1, 1, 1)
+cam_target = gymapi.Vec3(0, 0, 0)
 middle_env = envs[num_envs // 2 + num_per_row // 2]
 gym.viewer_camera_look_at(viewer, middle_env, cam_pos, cam_target)
 
-# ==== prepare tensors =====
-# from now on, we will use the tensor API to access and control the physics simulation
 gym.prepare_sim(sim)
-
-_rb_states = gym.acquire_rigid_body_state_tensor(sim)
-rb_states = gymtorch.wrap_tensor(_rb_states)
-
-# DOF state tensor
-_dof_states = gym.acquire_dof_state_tensor(sim)
-dof_states = gymtorch.wrap_tensor(_dof_states)
-
-_pos_control = torch.zeros((num_envs, dvrk_num_dofs), dtype=torch.float, device=args.graphics_device_id)
-_effort_control = torch.zeros_like(_pos_control)
 
 while not gym.query_viewer_has_closed(viewer):
 
-    _effort_control = torch.rand((num_envs, dvrk_num_dofs), device=args.graphics_device_id) - 0.5
-    print(_effort_control)
+    arr = np.array([5] * dvrk_num_dofs, dtype=np.float32)
+    gym.apply_actor_dof_efforts(envs[0], handles[0], arr)
 
-    gym.set_dof_position_target_tensor(
-        sim,
-        gymtorch.unwrap_tensor(_pos_control)
-    )
-    gym.set_dof_actuation_force_tensor(
-        sim,
-        gymtorch.unwrap_tensor(_effort_control)
-    )
+    print(gym.get_env_rigid_contact_forces(envs[0]))
 
     # Step the physics
     gym.simulate(sim)
@@ -177,6 +185,8 @@ while not gym.query_viewer_has_closed(viewer):
     # Step rendering
     gym.step_graphics(sim)
     gym.draw_viewer(viewer, sim, False)
+
+    gym.sync_frame_time(sim)
 
 print("Done")
 

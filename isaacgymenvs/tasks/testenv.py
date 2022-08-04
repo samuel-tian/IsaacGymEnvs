@@ -7,9 +7,6 @@ from isaacgym import gymutil, gymtorch, gymapi
 from isaacgym.torch_utils import *
 from .base.vec_task import VecTask
 
-pkg_path = rp.get_pkg_dir('shape_servo_control')
-sys.path.append(pkg_path + '/src')
-
 ROBOT_Z_OFFSET = 0.25
 
 class TestEnv(VecTask):
@@ -17,13 +14,14 @@ class TestEnv(VecTask):
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
 
         self.cfg = cfg
+        self.cfg['sim']['dt'] = 1.0 / 60.0
         self.max_episode_length = self.cfg['env']['episodeLength']
 
         self.action_scale = self.cfg['env']['actionScale']
         self.dvrk_dof_noise = self.cfg['env']['dvrkDofNoise']
         
-        # observations include eef cartesian coordinates (3)
-        self.cfg['env']['numObservations'] = 3
+        # observations include: eef_pose (7) + q (10)
+        self.cfg['env']['numObservations'] = 17
         # actions include: joint torques (8) + bool gripper (1)
         self.cfg['env']['numActions'] = 9
 
@@ -106,6 +104,7 @@ class TestEnv(VecTask):
             os.path.dirname(os.path.abspath(__file__)),
             "../../assets/urdf")
         dvrk_asset_file = "dvrk_description/psm/psm_for_issacgym.urdf"
+        soft_asset_file = "box.urdf"
 
         # load dvrk asset
         asset_options = gymapi.AssetOptions()
@@ -124,6 +123,12 @@ class TestEnv(VecTask):
 
         dvrk_dof_stiffness = to_torch([0, 0, 0, 0, 0, 0, 0, 0, 5000, 5000], dtype=torch.float, device=self.device)
         dvrk_dof_damping = to_torch([0, 0, 0, 0, 0, 0, 0, 0, 1.0e2, 1.0e2], dtype=torch.float, device=self.device)
+
+        # load soft object asset
+        asset_options.collapse_fixed_joints = True
+        asset_options.disable_gravity = False
+        asset_options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
+        soft_asset = self.gym.load_asset(self.sim, asset_root, soft_asset_file, asset_options)
 
         self.num_dvrk_bodies = self.gym.get_asset_rigid_body_count(dvrk_asset)
         self.num_dvrk_dofs = self.gym.get_asset_dof_count(dvrk_asset)
@@ -154,25 +159,35 @@ class TestEnv(VecTask):
         self.dvrk_dof_speed_scales[[-2, -1]] = 0.1
         dvrk_dof_props['effort'][-2] = 200
         dvrk_dof_props['effort'][-1] = 200
+
+        # set soft object dof properties
+        soft_dof_props = self.gym.get_asset_dof_properties(soft_asset)
         
         # asset orientation
         dvrk_pose = gymapi.Transform()
         dvrk_pose.p = gymapi.Vec3(0.0, 0.0, 0.0)
         dvrk_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
+        soft_start_pose = gymapi.Transform()
+        soft_start_pose.p = gymapi.Vec3(1.0, 1.0, 1.0)
 
         # set up the env grid
         self.dvrk_handles = []
+        self.soft_objs = []
         self.envs = []
         for i in range(self.num_envs):
             # create env instance
             env_ptr = self.gym.create_env(
                 self.sim, lower, upper, num_per_row
             )
-            dvrk_handle = self.gym.create_actor(env_ptr, dvrk_asset, dvrk_pose, "dvrk", i, 0, 0)
+            dvrk_handle = self.gym.create_actor(env_ptr, dvrk_asset, dvrk_pose, "dvrk", i, 1, 0)
             self.gym.set_actor_dof_properties(env_ptr, dvrk_handle, dvrk_dof_props)
+
+            soft_handle = self.gym.create_actor(env_ptr, soft_asset, soft_start_pose, "soft", i, 2, 0)
+            self.gym.set_actor_dof_properties(env_ptr, soft_handle, soft_dof_props)
 
             self.envs.append(env_ptr)
             self.dvrk_handles.append(dvrk_handle)
+            self.soft_objs.append(soft_handle)
 
         self.init_data()
 
@@ -181,9 +196,7 @@ class TestEnv(VecTask):
         env_ptr = self.envs[0]
         dvrk_handle = 0
         self.handles = {
-            "yaw_link" : self.gym.find_actor_rigid_body_handle(env_ptr, dvrk_handle, "psm_tool_yaw_link"),
-            "gripper1" : self.gym.find_actor_rigid_body_handle(env_ptr, dvrk_handle, "psm_tool_gripper1_link"),
-            "gripper2" : self.gym.find_actor_rigid_body_handle(env_ptr, dvrk_handle, "psm_tool_gripper2_link")
+            "yaw_link" : self.gym.find_actor_rigid_body_handle(env_ptr, dvrk_handle, "psm_tool_yaw_link")
         }
 
         # setup tensor buffers
@@ -217,7 +230,9 @@ class TestEnv(VecTask):
 
     def _update_states(self):
         self.states.update({
+            "q": self._q[:, :],
             "eef_pos": self._eef_state[:, :3],
+            "eef_quat": self._eef_state[:, 3:7],
             "eef_vel": self._eef_state[:, 7:],
         })
 
@@ -230,7 +245,7 @@ class TestEnv(VecTask):
 
     def compute_observations(self, env_ids = None):
         self._refresh()
-        obs = ["eef_pos"]
+        obs = ["eef_pos", "eef_quat", "q"]
         self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
 
         return self.obs_buf
@@ -283,7 +298,6 @@ class TestEnv(VecTask):
         #    - e.g. apply actions
 
         self.actions = actions.clone().to(self.device)
-        self.actions[:, 0] = -torch.abs(self.actions[:, 0])
 
         u_arm, u_gripper = self.actions[:, :-1], self.actions[:, -1]
 
@@ -318,7 +332,7 @@ class TestEnv(VecTask):
         self.compute_reward(self.actions)
 
     def compute_reward(self, actions):
-        target_pos = torch.tensor([-0.5, 0.5, 0.5], device=self.device)
+        target_pos = torch.tensor([0.2, 0.2, 0.2], device=self.device)
         # target_vel = torch.tensor([0, 0, 0, 0, 0, 0], device=self.device)
         d_pos = torch.norm(self.states["eef_pos"] - target_pos, dim=-1)
         # d_vel = torch.norm(self.states["eef_vel"] - target_vel, dim=-1)

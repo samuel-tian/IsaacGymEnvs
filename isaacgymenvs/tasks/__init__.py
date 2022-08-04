@@ -48,6 +48,7 @@ from .allegro_hand import AllegroHand
 from .trifinger import Trifinger
 
 from .testenv import TestEnv
+from .softbody import SoftBody
 
 # Mappings from strings to environments
 isaacgym_task_map = {
@@ -71,4 +72,5 @@ isaacgym_task_map = {
     "ShadowHand": ShadowHand,
     "Trifinger": Trifinger,
     "TestEnv": TestEnv,
+    "SoftBody": SoftBody,
 }
