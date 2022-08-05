@@ -30,12 +30,14 @@ class SoftBody(VecTask):
         )
 
         # setup viewer settings
-        cam_pos = gymapi.Vec3(1.0, 1.0, 1.0)
-        cam_target = gymapi.Vec3(0.0, 0.0, 0.0)
+        cam_pos = gymapi.Vec3(1.0, 1.0, 3.0)
+        cam_target = gymapi.Vec3(0.0, 0.0, 2.0)
         self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
 
         # reset all environments
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
+
+        self.refresh(torch.arange(self.num_envs, device=self.device))
         
         
     def create_sim(self):
@@ -49,6 +51,7 @@ class SoftBody(VecTask):
         self.gym.add_ground(self.sim, plane_params)
 
         self._create_envs(self.num_envs, self.cfg['env']['envSpacing'], int(np.sqrt(self.num_envs)))
+        
 
     def _create_envs(self, num_envs, spacing, num_per_row):
 
@@ -83,17 +86,25 @@ class SoftBody(VecTask):
 
         # set dvrk dof properties
         dvrk_dof_props = self.gym.get_asset_dof_properties(dvrk_asset)
-        self.dvrk_dof_lower_limits = dvrk_dof_props['lower']
-        self.dvrk_dof_upper_limits = dvrk_dof_props['upper']
-        self.dvrk_effort_limits = dvrk_dof_props['effort']
+        self.dvrk_dof_lower_limits = np.array(dvrk_dof_props['lower'])
+        self.dvrk_dof_upper_limits = np.array(dvrk_dof_props['upper'])
+        self.dvrk_effort_limits = np.array(dvrk_dof_props['effort'])
+        self.cmd_limit = self.dvrk_effort_limits[:8]
         self.num_dofs = len(dvrk_dof_props)
 
-        self.dvrk_dof_lower_limits = to_torch(self.dvrk_dof_lower_limits, device=self.device)
-        self.dvrk_dof_upper_limits = to_torch(self.dvrk_dof_upper_limits, device=self.device)
+        dvrk_dof_props["driveMode"][:].fill(gymapi.DOF_MODE_EFFORT)
+        dvrk_dof_props["stiffness"][:].fill(100.0)
+        dvrk_dof_props["damping"][:].fill(100.0)
+        dvrk_dof_props["driveMode"][8:].fill(gymapi.DOF_MODE_POS)
+        dvrk_dof_props["stiffness"][8:].fill(800.0)
+        dvrk_dof_props["damping"][8:].fill(40.0)
+
+        self.dvrk_default_dof_pos = np.zeros((self.num_dofs), dtype=np.float32)
+        self.dvrk_default_dof_pos[:-2] = (0.5 * (self.dvrk_dof_lower_limits + self.dvrk_dof_upper_limits))[:-2]
 
         # set dvrk pose
         dvrk_pose = gymapi.Transform()
-        dvrk_pose.p = gymapi.Vec3(0.0, 0.0, 0.0)
+        dvrk_pose.p = gymapi.Vec3(0.0, 0.0, 2.0)
         dvrk_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
         # configure and load deformable asset
@@ -126,28 +137,170 @@ class SoftBody(VecTask):
             dvrk_handle = self.gym.create_actor(env_ptr, dvrk_asset, dvrk_pose, "dvrk", i, 1, 0)
             self.gym.set_actor_dof_properties(env_ptr, dvrk_handle, dvrk_dof_props)
 
-            soft_handle = self.gym.create_actor(env_ptr, soft_asset, soft_pose, "soft", i, 2, 0)
+            # soft_handle = self.gym.create_actor(env_ptr, soft_asset, soft_pose, "soft", i, 2, 0)
 
             self.envs.append(env_ptr)
             self.dvrk_handles.append(dvrk_handle)
             # self.soft_handles.append(soft_handle)
 
         self.init_data()
+        
 
     def init_data(self):
-        pass
+        # initialize states
+        self.states = {}
+        self.q = np.zeros((self.num_envs, self.num_dofs), dtype=np.float32)
+        self.eef_state = np.zeros((self.num_envs), dtype=gymapi.RigidBodyState)
+        self.eef_pose = np.zeros((self.num_envs, 3), dtype=np.float32)
+        self.eef_quat = np.zeros((self.num_envs, 4), dtype=np.float32)
+        self.eef_vel = np.zeros((self.num_envs, 6), dtype=np.float32)
 
-    def compute_observations(self, env_ids = None):
-        pass
+        self.refresh(torch.arange(self.num_envs, device=self.device))
+        
+        # initialize actions
+        self.pos_control = np.zeros((self.num_envs, self.num_dofs), dtype=np.float32)
+        self.effort_control = np.zeros_like(self.pos_control)
+
+        # initialize control
+        self.arm_control = self.effort_control[:, :8]
+        self.gripper_control = self.pos_control[:, 8:10]
+
+
+    def refresh(self, env_ids):
+        self.rigid_body_state = self.gym.get_sim_rigid_body_states(self.sim, gymapi.STATE_ALL)
+        self.dvrk_dof_state = self.gym.get_vec_actor_dof_states(self.envs, self.dvrk_handles, gymapi.STATE_ALL)
+
+        for i in env_ids:
+            # reset q
+            for j in range(self.num_dofs):
+                self.q[i][j] = self.dvrk_dof_state[i][j]['pos']
+
+            # reset eef_state
+            handle = self.gym.find_actor_rigid_body_index(self.envs[i], self.dvrk_handles[i], "psm_tool_yaw_link", gymapi.DOMAIN_SIM)
+            self.eef_state[i] = self.rigid_body_state[handle]
+            self.eef_pose[i][:] = np.array([self.eef_state[i]['pose']['p']['x'],
+                                            self.eef_state[i]['pose']['p']['y'],
+                                            self.eef_state[i]['pose']['p']['z']])
+            self.eef_quat[i][:] = np.array([self.eef_state[i]['pose']['r']['x'],
+                                            self.eef_state[i]['pose']['r']['y'],
+                                            self.eef_state[i]['pose']['r']['z'],
+                                            self.eef_state[i]['pose']['r']['w']])
+            self.eef_vel[i][:] = np.array([self.eef_state[i]['vel']['linear']['x'],
+                                           self.eef_state[i]['vel']['linear']['y'],
+                                           self.eef_state[i]['vel']['linear']['z'],
+                                           self.eef_state[i]['vel']['angular']['x'],
+                                           self.eef_state[i]['vel']['angular']['y'],
+                                           self.eef_state[i]['vel']['angular']['z']])
+
+        self.states.update({
+            'q': self.q[:, :],
+            'eef_pos': self.eef_pose[:],
+            'eef_quat': self.eef_quat[:],
+            'eef_vel': self.eef_vel[:]
+        })
+        for i in self.states:
+            self.states[i] = torch.tensor(self.states[i])
+
+
+    def compute_observations(self):
+        self.refresh(torch.arange(self.num_envs, device=self.device))
+        obs = ["eef_pos", "eef_quat", "q"]
+        self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
+        
+        return self.obs_buf
+    
 
     def reset_idx(self, env_ids):
-        pass
+        print("RESETING ENVIRONMENTS", env_ids)
+
+        # np.set_printoptions(precision=15)
+        
+        reset_noise = np.random.rand(len(env_ids), self.num_dofs)
+        pos = np.clip(
+            self.dvrk_default_dof_pos + self.dvrk_dof_noise * 2.0 * (reset_noise - 0.5),
+            self.dvrk_dof_lower_limits,
+            self.dvrk_dof_upper_limits
+        )
+        pos[:, -2:] = self.dvrk_default_dof_pos[-2:]
+
+        self.pos_control[env_ids, :] = pos
+        self.effort_control[env_ids, :] = np.zeros_like(pos)
+
+        # print("BEFORE")
+        # print(self.gym.get_vec_actor_dof_states(self.envs, self.dvrk_handles, gymapi.STATE_ALL))
+
+        zero_velocity = np.zeros((self.num_envs, self.num_dofs), dtype=np.float32)
+
+        # deploy updates
+        for i in range(len(env_ids)):
+            env = env_ids[i]
+            for j in range(self.num_dofs):
+                self.dvrk_dof_state[env][j]['pos'] = pos[i][j]
+                self.dvrk_dof_state[env][j]['vel'] = 0
+                # print(pos[env][j], self.dvrk_dof_state[env][j]['pos'])
+                # assert(pos[env][j] == self.dvrk_dof_state[env][j]['pos'])
+
+            self.gym.set_actor_dof_position_targets(self.envs[env], self.dvrk_handles[env], self.pos_control[env])
+            self.gym.set_actor_dof_velocity_targets(self.envs[env], self.dvrk_handles[env], zero_velocity[env])
+            self.gym.apply_actor_dof_efforts(self.envs[env], self.dvrk_handles[env], self.effort_control[env])
+            self.gym.set_actor_dof_states(self.envs[env], self.dvrk_handles[env], self.dvrk_dof_state[env], gymapi.STATE_ALL)
+
+            # print(pos[env])
+            # print(self.dvrk_dof_state[env])
+
+        # print("AFTER")
+        # print(pos)
+        # print(self.gym.get_vec_actor_dof_states(self.envs, self.dvrk_handles, gymapi.STATE_ALL))
+
+        self.progress_buf[env_ids] = 0
+        self.reset_buf[env_ids] = 0
+
 
     def pre_physics_step(self, actions):
-        pass
+        self.actions = actions.clone().to(self.device)
+
+        u_arm, u_gripper = self.actions[:, :-1], self.actions[:, -1]
+
+        # control arm
+        u_arm = u_arm * self.cmd_limit / self.action_scale
+        self.arm_control[:, :] = u_arm
+
+        # control gripper
+        u_fingers = np.zeros_like(self.gripper_control)
+        u_fingers[:, 0] = np.where(u_gripper >= 0.0,
+                                   self.dvrk_dof_upper_limits[-2].item(),
+                                   self.dvrk_dof_lower_limits[-2].item())
+        u_fingers[:, 1] = np.where(u_gripper >= 0.0,
+                                   self.dvrk_dof_upper_limits[-1].item(),
+                                   self.dvrk_dof_lower_limits[-1].item())
+        self.gripper_control[:, :] = u_fingers
+
+        for i in range(self.num_envs):
+            self.gym.set_actor_dof_position_targets(self.envs[i], self.dvrk_handles[i], self.pos_control[i])
+            self.gym.apply_actor_dof_efforts(self.envs[i], self.dvrk_handles[i], self.effort_control[i])
+        
+        
 
     def post_physics_step(self):
-        pass
+        self.progress_buf += 1
+        env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        if len(env_ids) > 0:
+            self.reset_idx(env_ids)
+
+        self.compute_observations()
+        self.compute_reward(self.actions)
+    
 
     def compute_reward(self, actions):
-        pass
+        target_pos = torch.tensor([0.3, 0.3, 2.3], device=self.device)
+        target_vel = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], device=self.device)
+        d_pos = torch.norm(self.states['eef_pos'] - target_pos, dim=-1)
+        d_vel = torch.norm(self.states['eef_vel'] - target_vel, dim=-1)
+
+        rewards = -(10 * d_pos + d_vel)
+        
+        reset_buf = torch.where((self.progress_buf >= self.max_episode_length - 1) | (rewards > -0.5),
+                                torch.ones_like(self.reset_buf), self.reset_buf)
+
+        self.rew_buf[:] = rewards
+        self.reset_buf[:] = reset_buf

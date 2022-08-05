@@ -6,16 +6,16 @@ physics_engine: flex
 env:
   numEnvs: ${resolve_default:256,${...num_envs}}
   envSpacing: 1.5
-  episodeLength: 100
+  episodeLength: 300
 
-  dvrkDofNoise: 0.25
-  actionScale: 7.5
+  dvrkDofNoise: 0.1
+  actionScale: 100
 
 sim:
   dt: 0.0166
   substeps: 3
   up_axis: "z"
-  use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
+  use_gpu_pipeline: ${eq:${...pipeline},"cpu"}
   gravity: [0.0, 0.0, -9.81]
   flex:
     solver_type: 5
