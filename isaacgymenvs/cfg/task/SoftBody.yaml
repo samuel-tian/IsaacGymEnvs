@@ -4,7 +4,7 @@ physics_engine: flex
 
 # if given, will override the device setting in gym. 
 env:
-  numEnvs: ${resolve_default:256,${...num_envs}}
+  numEnvs: ${resolve_default:64,${...num_envs}}
   envSpacing: 1.5
   episodeLength: 300
 
@@ -23,7 +23,9 @@ sim:
     num_inner_iterations: 20
     relaxation: 0.8
     warm_start: 0.5
-    shape_collision_margin: 0.1
+    contact_regularization: 0.0001
+    shape_collision_distance: 0.0001
+    shape_collision_margin: 0.0001
   
 task:
   randomize: False

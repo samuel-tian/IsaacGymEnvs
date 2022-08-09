@@ -1,0 +1,26 @@
+<?xml version="1.0" ?>
+
+<robot name="isosphere">
+
+  <link name="world"></link>
+
+  <link name="soft">
+    <fem>
+      <origin rpy="0.0 0.0 0.0" xyz="0 0 0"/>
+      <density value="1000"/>
+      <youngs value="1e5"/>
+      <poissons value="0.45"/>
+      <damping value="0.0"/>
+      <attachDistance value="0.0"/>
+      <tetmesh filename="icosphere.tet"/>
+      <scale value="0.1"/>
+    </fem>
+  </link>
+
+  <joint name="attach" type="fixed">
+    <origin xyz = "0.0 0.0 0.0" rpy = "0 0 0"/>
+    <parent link="world"/>
+    <child link="soft"/>
+  </joint>
+
+</robot>

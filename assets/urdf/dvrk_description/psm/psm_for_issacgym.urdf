@@ -13,21 +13,21 @@
     <child link="psm_yaw_link"/>
     <origin rpy="-1.57079 -1.57079  3.14159" xyz="0  0  0"/>
     <axis xyz="0  0 -1"/>
-    <limit effort="1000.0" lower="-1.605" upper="1.5994" velocity="10.0"/>
+    <limit effort="100.0" lower="-1.605" upper="1.5994" velocity="10.0"/>
   </joint>
   <joint name="psm_pitch_back_joint" type="revolute">
     <parent link="psm_yaw_link"/>
     <child link="psm_pitch_back_link"/>
     <origin rpy="-1.57079 -0.29072  0" xyz="0      0      0.0296"/>
     <axis xyz="0  0  1"/>
-    <limit effort="1000.0" lower="-0.93556" upper="0.94249" velocity="10.0"/>
+    <limit effort="100.0" lower="-0.93556" upper="0.94249" velocity="10.0"/>
   </joint>
   <joint name="psm_pitch_bottom_joint" type="revolute">
     <parent link="psm_pitch_back_link"/>
     <child link="psm_pitch_bottom_link"/>
     <origin rpy="0       0       1.86149" xyz="0.15  0    0"/>
     <axis xyz="0  0  1"/>
-    <limit effort="1000.0" lower="-0.94249" upper="0.93556" velocity="10.0"/>
+    <limit effort="100.0" lower="-0.94249" upper="0.93556" velocity="10.0"/>
 <!--    <mimic joint="psm_pitch_back_joint" multiplier="-1"/>-->
   </joint>
   <joint name="psm_pitch_end_joint" type="revolute">
@@ -35,7 +35,7 @@
     <child link="psm_pitch_end_link"/>
     <origin rpy="0  0  0" xyz="0.42  0    0"/>
     <axis xyz="0  0  1"/>
-    <limit effort="1000.0" lower="-0.93556" upper="0.94249" velocity="10.0"/>
+    <limit effort="100.0" lower="-0.93556" upper="0.94249" velocity="10.0"/>
 <!--    <mimic joint="psm_pitch_back_joint" multiplier="1"/>-->
   </joint>
   <joint name="psm_main_insertion_joint" type="prismatic">
@@ -43,29 +43,29 @@
     <child link="psm_main_insertion_link"/>
     <origin rpy="1.57079  0      -3.14158" xyz="0.03912 -0.25179  0"/>
     <axis xyz="3.00000000e-05   0.00000000e+00   1.00000000e+00"/>
-    <limit effort="1000.0" lower="0.042" upper="0.24" velocity="0.1"/>
+    <limit effort="100.0" lower="0.042" upper="0.24" velocity="0.1"/>
   </joint>
   <joint name="psm_tool_roll_joint" type="revolute">
     <parent link="psm_main_insertion_link"/>
     <child link="psm_tool_roll_link"/>
     <origin rpy="0       0      -3.14159" xyz="0      0      0.4162"/>
     <axis xyz="-3.00000000e-05   0.00000000e+00   1.00000000e+00"/>
-<!--    <limit effort="1000.0" lower="-3.14159" upper="3.14159" velocity="10.0"/>-->
-    <limit effort="1000.0" lower="-3.14" upper="3.14" velocity="10.0"/>
+<!--    <limit effort="100.0" lower="-3.14159" upper="3.14159" velocity="10.0"/>-->
+    <limit effort="100.0" lower="-3.14" upper="3.14" velocity="10.0"/>
   </joint>
   <joint name="psm_tool_pitch_joint" type="revolute">
     <parent link="psm_tool_roll_link"/>
     <child link="psm_tool_pitch_link"/>
     <origin rpy="-0.83162 -1.57079  2.40243" xyz="0  0  0"/>
     <axis xyz="0  0 -1"/>
-    <limit effort="1000.0" lower="-1.5708" upper="1.5708" velocity="10.0"/>
+    <limit effort="100.0" lower="-1.5708" upper="1.5708" velocity="10.0"/>
   </joint>
   <joint name="psm_tool_yaw_joint" type="revolute">
     <parent link="psm_tool_pitch_link"/>
     <child link="psm_tool_yaw_link"/>
     <origin rpy="-1.57079 -1.57079 -3.14159" xyz="0.0091  0      0"/>
     <axis xyz="0  0  1"/>
-    <limit effort="1000.0" lower="-1.5708" upper="1.5708" velocity="10.0"/>
+    <limit effort="100.0" lower="-1.5708" upper="1.5708" velocity="10.0"/>
   </joint>
   <joint name="psm_tool_gripper1_joint" type="revolute">
     <parent link="psm_tool_yaw_link"/>
@@ -91,7 +91,7 @@
 <!--    <child link="psm_pitch_top_link"/>-->
 <!--    <origin rpy="0       0       1.86149" xyz="0.18366  0.01412  0"/>-->
 <!--    <axis xyz="0  0  1"/>-->
-<!--    <limit effort="1000.0" lower="-0.94249" upper="0.93556" velocity="10.0"/>-->
+<!--    <limit effort="100.0" lower="-0.94249" upper="0.93556" velocity="10.0"/>-->
 <!--    <mimic joint="psm_pitch_back_joint" multiplier="-1"/>-->
 <!--  </joint>-->
 <!--  <joint name="psm_pitch_front_joint" type="revolute">-->
@@ -99,7 +99,7 @@
 <!--    <child link="psm_pitch_front_link"/>-->
 <!--    <origin rpy="-1.57079 -0.29072  0" xyz="0      0     -0.0664"/>-->
 <!--    <axis xyz="0  0  1"/>-->
-<!--    <limit effort="1000.0" lower="-0.93556" upper="0.94249" velocity="10.0"/>-->
+<!--    <limit effort="100.0" lower="-0.93556" upper="0.94249" velocity="10.0"/>-->
 <!--    <mimic joint="psm_pitch_back_joint" multiplier="1"/>-->
 <!--  </joint>-->
 <!--  <joint name="psm_pitch_front_bottom_joint" type="revolute">-->
@@ -107,7 +107,7 @@
 <!--    <child link="psm_pitch_bottom_link"/>-->
 <!--    <origin rpy="0       0       1.86149" xyz="0.15  0    0"/>-->
 <!--    <axis xyz="0  0  1"/>-->
-<!--    <limit effort="1000.0" lower="-0.93556" upper="0.94249" velocity="1.0"/>-->
+<!--    <limit effort="100.0" lower="-0.93556" upper="0.94249" velocity="1.0"/>-->
 <!--    -->
 <!--  </joint>-->
 <!--  <joint name="psm_pitch_top_end_joint" type="revolute">-->
@@ -115,7 +115,7 @@
 <!--    <child link="psm_pitch_end_link"/>-->
 <!--    <origin rpy="0  0  0" xyz="0.51599  0       0"/>-->
 <!--    <axis xyz="0  0  1"/>-->
-<!--    <limit effort="1000.0" lower="-0.93556" upper="0.94249" velocity="1.0"/>-->
+<!--    <limit effort="100.0" lower="-0.93556" upper="0.94249" velocity="1.0"/>-->
 <!--  </joint>-->
 
 <!--  ================================================================================== -->

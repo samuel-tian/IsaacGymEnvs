@@ -8,6 +8,8 @@ from .base.vec_task import VecTask
 
 class SoftBody(VecTask):
 
+    ROBOT_Z_OFFSET = 0.25
+
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
         
         self.cfg = cfg
@@ -30,8 +32,8 @@ class SoftBody(VecTask):
         )
 
         # setup viewer settings
-        cam_pos = gymapi.Vec3(1.0, 1.0, 3.0)
-        cam_target = gymapi.Vec3(0.0, 0.0, 2.0)
+        cam_pos = gymapi.Vec3(1.0, 1.0, 1.0 + self.ROBOT_Z_OFFSET)
+        cam_target = gymapi.Vec3(0.0, 0.0, self.ROBOT_Z_OFFSET)
         self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
 
         # reset all environments
@@ -104,14 +106,15 @@ class SoftBody(VecTask):
 
         # set dvrk pose
         dvrk_pose = gymapi.Transform()
-        dvrk_pose.p = gymapi.Vec3(0.0, 0.0, 2.0)
+        dvrk_pose.p = gymapi.Vec3(0.0, 0.0, self.ROBOT_Z_OFFSET)
         dvrk_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
         # configure and load deformable asset
-        soft_thickness = 0.1
+        soft_thickness = 0.001
         asset_options = gymapi.AssetOptions()
         asset_options.fix_base_link = True
         asset_options.thickness = soft_thickness
+        asset_options.disable_gravity = True
         asset_options.default_dof_drive_mode = gymapi.DOF_MODE_POS
         print("Loading asset '%s' from '%s'" % (soft_asset_file, asset_root))
         soft_asset = self.gym.load_asset(self.sim, asset_root, soft_asset_file, asset_options)
@@ -125,7 +128,7 @@ class SoftBody(VecTask):
 
         # set soft object pose
         soft_pose = gymapi.Transform()
-        soft_pose.p = gymapi.Vec3(0.0, 0.0, 0.0)
+        soft_pose.p = gymapi.Vec3(0.0, 0.5, 0.01)
         
         # setup env grid
         self.dvrk_handles = []
@@ -137,11 +140,11 @@ class SoftBody(VecTask):
             dvrk_handle = self.gym.create_actor(env_ptr, dvrk_asset, dvrk_pose, "dvrk", i, 1, 0)
             self.gym.set_actor_dof_properties(env_ptr, dvrk_handle, dvrk_dof_props)
 
-            # soft_handle = self.gym.create_actor(env_ptr, soft_asset, soft_pose, "soft", i, 2, 0)
+            soft_handle = self.gym.create_actor(env_ptr, soft_asset, soft_pose, "soft", i, 2, 0)
 
             self.envs.append(env_ptr)
             self.dvrk_handles.append(dvrk_handle)
-            # self.soft_handles.append(soft_handle)
+            self.soft_handles.append(soft_handle)
 
         self.init_data()
         
@@ -155,7 +158,12 @@ class SoftBody(VecTask):
         self.eef_quat = np.zeros((self.num_envs, 4), dtype=np.float32)
         self.eef_vel = np.zeros((self.num_envs, 6), dtype=np.float32)
 
+        _particle_state = self.gym.acquire_particle_state_tensor(self.sim)
+        self.particle_state = gymtorch.wrap_tensor(_particle_state).view(self.num_envs, -1, 11)
+
         self.refresh(torch.arange(self.num_envs, device=self.device))
+
+        self.init_soft_state = torch.clone(self.particle_state)
         
         # initialize actions
         self.pos_control = np.zeros((self.num_envs, self.num_dofs), dtype=np.float32)
@@ -165,8 +173,14 @@ class SoftBody(VecTask):
         self.arm_control = self.effort_control[:, :8]
         self.gripper_control = self.pos_control[:, 8:10]
 
+        self.global_indices = torch.arange(self.num_envs * 2,
+                                           dtype=torch.int32,
+                                           device=self.device).view(self.num_envs, -1)
+
 
     def refresh(self, env_ids):
+        self.gym.refresh_particle_state_tensor(self.sim)
+        
         self.rigid_body_state = self.gym.get_sim_rigid_body_states(self.sim, gymapi.STATE_ALL)
         self.dvrk_dof_state = self.gym.get_vec_actor_dof_states(self.envs, self.dvrk_handles, gymapi.STATE_ALL)
 
@@ -192,14 +206,15 @@ class SoftBody(VecTask):
                                            self.eef_state[i]['vel']['angular']['y'],
                                            self.eef_state[i]['vel']['angular']['z']])
 
+        # update non tensors
         self.states.update({
-            'q': self.q[:, :],
-            'eef_pos': self.eef_pose[:],
-            'eef_quat': self.eef_quat[:],
-            'eef_vel': self.eef_vel[:]
+            'q': torch.tensor(self.q[:, :]),
+            'eef_pos': torch.tensor(self.eef_pose[:]),
+            'eef_quat': torch.tensor(self.eef_quat[:]),
+            'eef_vel': torch.tensor(self.eef_vel[:]),
+
+            'soft_pos': self.particle_state[:, 0, :3],
         })
-        for i in self.states:
-            self.states[i] = torch.tensor(self.states[i])
 
 
     def compute_observations(self):
@@ -213,8 +228,6 @@ class SoftBody(VecTask):
     def reset_idx(self, env_ids):
         print("RESETING ENVIRONMENTS", env_ids)
 
-        # np.set_printoptions(precision=15)
-        
         reset_noise = np.random.rand(len(env_ids), self.num_dofs)
         pos = np.clip(
             self.dvrk_default_dof_pos + self.dvrk_dof_noise * 2.0 * (reset_noise - 0.5),
@@ -226,9 +239,6 @@ class SoftBody(VecTask):
         self.pos_control[env_ids, :] = pos
         self.effort_control[env_ids, :] = np.zeros_like(pos)
 
-        # print("BEFORE")
-        # print(self.gym.get_vec_actor_dof_states(self.envs, self.dvrk_handles, gymapi.STATE_ALL))
-
         zero_velocity = np.zeros((self.num_envs, self.num_dofs), dtype=np.float32)
 
         # deploy updates
@@ -237,21 +247,24 @@ class SoftBody(VecTask):
             for j in range(self.num_dofs):
                 self.dvrk_dof_state[env][j]['pos'] = pos[i][j]
                 self.dvrk_dof_state[env][j]['vel'] = 0
-                # print(pos[env][j], self.dvrk_dof_state[env][j]['pos'])
-                # assert(pos[env][j] == self.dvrk_dof_state[env][j]['pos'])
 
             self.gym.set_actor_dof_position_targets(self.envs[env], self.dvrk_handles[env], self.pos_control[env])
             self.gym.set_actor_dof_velocity_targets(self.envs[env], self.dvrk_handles[env], zero_velocity[env])
             self.gym.apply_actor_dof_efforts(self.envs[env], self.dvrk_handles[env], self.effort_control[env])
             self.gym.set_actor_dof_states(self.envs[env], self.dvrk_handles[env], self.dvrk_dof_state[env], gymapi.STATE_ALL)
 
-            # print(pos[env])
-            # print(self.dvrk_dof_state[env])
-
-        # print("AFTER")
-        # print(pos)
-        # print(self.gym.get_vec_actor_dof_states(self.envs, self.dvrk_handles, gymapi.STATE_ALL))
-
+        # reset soft body
+        soft_ids = self.global_indices[env_ids, 1].flatten()
+        # print("actor indices")
+        # print(self.gym.find_actor_index(self.envs[0], "soft", gymapi.DOMAIN_SIM))
+        # print(self.gym.find_actor_index(self.envs[1], "soft", gymapi.DOMAIN_SIM))
+        self.gym.set_particle_state_tensor_indexed(
+            self.sim,
+            gymtorch.unwrap_tensor(self.init_soft_state),
+            gymtorch.unwrap_tensor(soft_ids),
+            len(soft_ids)
+        )
+        
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
 
@@ -280,7 +293,6 @@ class SoftBody(VecTask):
             self.gym.apply_actor_dof_efforts(self.envs[i], self.dvrk_handles[i], self.effort_control[i])
         
         
-
     def post_physics_step(self):
         self.progress_buf += 1
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
@@ -292,7 +304,7 @@ class SoftBody(VecTask):
     
 
     def compute_reward(self, actions):
-        target_pos = torch.tensor([0.3, 0.3, 2.3], device=self.device)
+        target_pos = self.states['soft_pos']
         target_vel = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], device=self.device)
         d_pos = torch.norm(self.states['eef_pos'] - target_pos, dim=-1)
         d_vel = torch.norm(self.states['eef_vel'] - target_vel, dim=-1)
