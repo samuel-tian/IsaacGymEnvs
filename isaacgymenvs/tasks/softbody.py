@@ -4,6 +4,7 @@ import torch
 
 from isaacgym import gymutil, gymtorch, gymapi
 from isaacgym.torch_utils import *
+from isaacgymenvs.utils.torch_jit_utils import *
 from .base.vec_task import VecTask
 
 class SoftBody(VecTask):
@@ -228,6 +229,13 @@ class SoftBody(VecTask):
     def reset_idx(self, env_ids):
         print("RESETING ENVIRONMENTS", env_ids)
 
+        success_envs = []
+        for env_id in env_ids:
+            if self.progress_buf[env_id] < self.max_episode_length - 1:
+                success_envs.append(env_id)
+        if success_envs:
+            print("SUCCESSFUL", success_envs)
+
         reset_noise = np.random.rand(len(env_ids), self.num_dofs)
         pos = np.clip(
             self.dvrk_default_dof_pos + self.dvrk_dof_noise * 2.0 * (reset_noise - 0.5),
@@ -304,15 +312,41 @@ class SoftBody(VecTask):
     
 
     def compute_reward(self, actions):
-        target_pos = self.states['soft_pos']
-        target_vel = torch.tensor([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], device=self.device)
-        d_pos = torch.norm(self.states['eef_pos'] - target_pos, dim=-1)
-        d_vel = torch.norm(self.states['eef_vel'] - target_vel, dim=-1)
+        target = self.init_soft_state[0, 0, :3]
+        target = torch.clone(target)
+        target[2] = target[2] + 0.5
+        self.rew_buf[:], self.reset_buf[:] = compute_dvrk_reward(
+            self.reset_buf,
+            self.progress_buf,
+            self.actions,
+            self.states,
+            target,
+            self.max_episode_length
+        )
 
-        rewards = -(10 * d_pos + d_vel)
-        
-        reset_buf = torch.where((self.progress_buf >= self.max_episode_length - 1) | (rewards > -0.5),
-                                torch.ones_like(self.reset_buf), self.reset_buf)
+@torch.jit.script
+def compute_dvrk_reward(reset_buf, progress_buf, actions, states, target, max_episode_length):
+    # type: (Tensor, Tensor, Tensor, Dict[str, Tensor], Tensor, float) -> Tuple[Tensor, Tensor]
 
-        self.rew_buf[:] = rewards
-        self.reset_buf[:] = reset_buf
+    dvrk_pos = states['eef_pos']
+    dvrk_vel = states['eef_vel']
+    current_soft_pos = states['soft_pos']
+    target_soft_pos = target
+
+    d_to_soft_reward = torch.norm(dvrk_pos - current_soft_pos, dim=-1)
+    vel_reward = torch.norm(dvrk_vel, dim=-1)
+    soft_to_target_reward = torch.norm(current_soft_pos - target_soft_pos, dim=-1)
+
+    dvrk_to_soft_scale = -10
+    zero_vel_scale = -1
+    soft_to_target_scale = -10
+
+    rewards = (dvrk_to_soft_scale * d_to_soft_reward +
+               zero_vel_scale * vel_reward +
+               soft_to_target_scale * soft_to_target_reward)
+
+    finished_epsilon = 0.1
+    reset = torch.where((progress_buf >= max_episode_length - 1) | (soft_to_target_reward < finished_epsilon),
+                        torch.ones_like(reset_buf), reset_buf)
+
+    return rewards, reset
