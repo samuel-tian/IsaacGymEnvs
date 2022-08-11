@@ -19,7 +19,7 @@ class SoftBody(VecTask):
         self.action_scale = self.cfg['env']['actionScale']
         self.dvrk_dof_noise = self.cfg['env']['dvrkDofNoise']
 
-        self.cfg['env']['numObservations'] = 17
+        self.cfg['env']['numObservations'] = 20
         self.cfg['env']['numActions'] = 9
 
         super().__init__(
@@ -214,13 +214,13 @@ class SoftBody(VecTask):
             'eef_quat': torch.tensor(self.eef_quat[:]),
             'eef_vel': torch.tensor(self.eef_vel[:]),
 
-            'soft_pos': self.particle_state[:, 0, :3],
+            'soft_pos': self.particle_state[:, -1, :3],
         })
 
 
     def compute_observations(self):
         self.refresh(torch.arange(self.num_envs, device=self.device))
-        obs = ["eef_pos", "eef_quat", "q"]
+        obs = ["eef_pos", "eef_quat", "q", "soft_pos"]
         self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
         
         return self.obs_buf
@@ -312,7 +312,7 @@ class SoftBody(VecTask):
     
 
     def compute_reward(self, actions):
-        target = self.init_soft_state[0, 0, :3]
+        target = self.init_soft_state[0, -1, :3]
         target = torch.clone(target)
         target[2] = target[2] + 0.5
         self.rew_buf[:], self.reset_buf[:] = compute_dvrk_reward(
