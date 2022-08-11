@@ -1,7 +1,6 @@
 import numpy as np
 import os, sys, pickle
 import torch
-import roslib.packages as rp
 
 from isaacgym import gymutil, gymtorch, gymapi
 from isaacgym.torch_utils import *
