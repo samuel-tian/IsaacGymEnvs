@@ -214,7 +214,7 @@ class SoftBody(VecTask):
             'eef_quat': torch.tensor(self.eef_quat[:]),
             'eef_vel': torch.tensor(self.eef_vel[:]),
 
-            'soft_pos': self.particle_state[:, -1, :3],
+            'soft_pos': self.particle_state[:, 500, :3],
         })
 
 
@@ -312,9 +312,9 @@ class SoftBody(VecTask):
     
 
     def compute_reward(self, actions):
-        target = self.init_soft_state[0, -1, :3]
+        target = self.init_soft_state[0, 500, :3]
         target = torch.clone(target)
-        target[2] = target[2] + 0.5
+        target[2] = target[2] + 0.25
         self.rew_buf[:], self.reset_buf[:] = compute_dvrk_reward(
             self.reset_buf,
             self.progress_buf,
@@ -337,15 +337,23 @@ def compute_dvrk_reward(reset_buf, progress_buf, actions, states, target, max_ep
     vel_reward = torch.norm(dvrk_vel, dim=-1)
     soft_to_target_reward = torch.norm(current_soft_pos - target_soft_pos, dim=-1)
 
+    dvrk_soft_contact = (d_to_soft_reward < 0.05)
+
     dvrk_to_soft_scale = -10
     zero_vel_scale = -1
-    soft_to_target_scale = -10
+    soft_to_target_scale = 10
 
-    rewards = (dvrk_to_soft_scale * d_to_soft_reward +
-               zero_vel_scale * vel_reward +
-               soft_to_target_scale * soft_to_target_reward)
+    rewards = torch.where(
+        dvrk_soft_contact,
+        soft_to_target_scale * (0.25 - soft_to_target_reward),
+        (dvrk_to_soft_scale * d_to_soft_reward + zero_vel_scale * vel_reward)
+    )
 
-    finished_epsilon = 0.1
+    # rewards = (dvrk_to_soft_scale * d_to_soft_reward +
+    #            zero_vel_scale * vel_reward +
+    #            soft_to_target_scale * soft_to_target_reward)
+
+    finished_epsilon = 0.05
     reset = torch.where((progress_buf >= max_episode_length - 1) | (soft_to_target_reward < finished_epsilon),
                         torch.ones_like(reset_buf), reset_buf)
 
