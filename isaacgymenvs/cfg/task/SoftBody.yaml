@@ -23,9 +23,9 @@ sim:
     num_inner_iterations: 20
     relaxation: 0.8
     warm_start: 0.5
-    contact_regularization: 0.0001
-    shape_collision_distance: 0.0001
-    shape_collision_margin: 0.0001
+    contact_regularization: 0.001
+    shape_collision_distance: 0.001
+    shape_collision_margin: 0.001
   
 task:
   randomize: False

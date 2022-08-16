@@ -19,6 +19,39 @@ import math
 import numpy as np
 import torch
 
+@torch.jit.script
+def axisangle2quat(vec, eps=1e-6):
+    """
+    Converts scaled axis-angle to quat.
+    Args:
+        vec (tensor): (..., 3) tensor where final dim is (ax,ay,az) axis-angle exponential coordinates
+        eps (float): Stability value below which small values will be mapped to 0
+    Returns:
+        tensor: (..., 4) tensor where final dim is (x,y,z,w) vec4 float quaternion
+    """
+    # type: (Tensor, float) -> Tensor
+    # store input shape and reshape
+    input_shape = vec.shape[:-1]
+    vec = vec.reshape(-1, 3)
+
+    # Grab angle
+    angle = torch.norm(vec, dim=-1, keepdim=True)
+
+    # Create return array
+    quat = torch.zeros(torch.prod(torch.tensor(input_shape)), 4, device=vec.device)
+    quat[:, 3] = 1.0
+
+    # Grab indexes where angle is not zero an convert the input to its quaternion form
+    idx = angle.reshape(-1) > eps
+    quat[idx, :] = torch.cat([
+        vec[idx, :] * torch.sin(angle[idx, :] / 2.0) / angle[idx, :],
+        torch.cos(angle[idx, :] / 2.0)
+    ], dim=-1)
+
+    # Reshape and return output
+    quat = quat.reshape(list(input_shape) + [4, ])
+    return quat
+
 # parse arguments
 args = gymutil.parse_arguments(description = "DVRK Import Test",
                                custom_parameters=[
@@ -37,13 +70,15 @@ sim_params = gymapi.SimParams()
 sim_params.up_axis = gymapi.UP_AXIS_Z
 sim_params.gravity = gymapi.Vec3(0.0, 0.0, -9.8)
 sim_params.dt = 1.0 / 60.0
-sim_params.substeps = 10
+sim_params.substeps = 3
 sim_params.flex.solver_type = 5
 sim_params.flex.num_outer_iterations = 4
 sim_params.flex.num_inner_iterations = 20
-sim_params.flex.relaxation = 0.75
-sim_params.flex.warm_start = 0.4
-sim_params.flex.shape_collision_margin = 0.1
+sim_params.flex.relaxation = 0.8
+sim_params.flex.warm_start = 0.5
+sim_params.flex.contact_regularization = 0.001
+sim_params.flex.shape_collision_distance = 0.001
+sim_params.flex.shape_collision_margin = 0.001
 sim_params.physx.solver_type = 1
 sim_params.physx.num_position_iterations = 4
 sim_params.physx.num_velocity_iterations = 1
@@ -51,9 +86,9 @@ sim_params.physx.num_threads = args.num_threads
 sim_params.physx.use_gpu = args.use_gpu
 
 # enable Von-Mises stress visualization
-sim_params.stress_visualization = True
-sim_params.stress_visualization_min = 0.0
-sim_params.stress_visualization_max = 1.e+5
+# sim_params.stress_visualization = True
+# sim_params.stress_visualization_min = 0.0
+# sim_params.stress_visualization_max = 1.e+5
 
 sim_params.use_gpu_pipeline = False
 sim = gym.create_sim(args.compute_device_id, args.graphics_device_id, args.physics_engine, sim_params)
@@ -76,22 +111,24 @@ asset_root = os.path.join(
     "../assets/")
 dvrk_asset_file = "urdf/dvrk_description/psm/psm_for_issacgym.urdf"
 # dvrk_asset_file = "urdf/franka_description/robots/franka_panda.urdf"
-soft_asset_file = "urdf/box.urdf"
+soft_asset_file = "urdf/Liver.urdf"
 
 asset_options = gymapi.AssetOptions()
-asset_options.fix_base_link = True
+asset_options.fix_base_link = False
 asset_options.flip_visual_attachments = False
 asset_options.armature = 0.01
 asset_options.disable_gravity = True
 asset_options.override_com = True
 asset_options.override_inertia = True
+asset_options.default_dof_drive_mode = gymapi.DOF_MODE_EFFORT
 print("Loading asset '%s' from '%s'" % (dvrk_asset_file, asset_root))
 dvrk_asset = gym.load_asset(
     sim, asset_root, dvrk_asset_file, asset_options)
 
-soft_thickness = 0.1
+soft_thickness = 0.001
 asset_options = gymapi.AssetOptions()
 asset_options.fix_base_link = True
+asset_options.disable_gravity = True
 asset_options.thickness = soft_thickness
 asset_options.default_dof_drive_mode = gymapi.DOF_MODE_POS
 print("Loading asset '%s' from '%s'" % (soft_asset_file, asset_root))
@@ -137,12 +174,13 @@ env_upper = gymapi.Vec3(spacing, spacing, spacing)
 
 # default dvrk pose
 pose = gymapi.Transform()
-pose.p = gymapi.Vec3(0, 0, 0)
-pose.r = gymapi.Quat(0, 0, 0, 1)
+pose.p = gymapi.Vec3(0.3, 0, 0.02)
+pose.r = gymapi.Quat(0, 0, 0, 1.0)
 
 soft_pose = gymapi.Transform()
-soft_pose.p = gymapi.Vec3(0, 0, 0)
-soft_pose.r = gymapi.Quat(0, 0, 0, 1)
+soft_pose.p = gymapi.Vec3(0, 0.5, 0.06)
+rot = axisangle2quat(torch.tensor([np.pi/3, 0, 0], dtype=torch.float32))
+soft_pose.r = gymapi.Quat(*rot.numpy().tolist())
 
 print("Creating %d environments" % num_envs)
 
@@ -161,7 +199,7 @@ for i in range(num_envs):
     gym.set_actor_dof_properties(env, dvrk_handle, dvrk_dof_props)
 
     # add soft object
-    # soft_handle = gym.create_actor(env, soft_asset, soft_pose, "soft", i, 2)
+    soft_handle = gym.create_actor(env, soft_asset, soft_pose, "soft", i, 2)
 
 # Point camera at middle env
 cam_pos = gymapi.Vec3(1, 1, 1)
@@ -172,11 +210,6 @@ gym.viewer_camera_look_at(viewer, middle_env, cam_pos, cam_target)
 gym.prepare_sim(sim)
 
 while not gym.query_viewer_has_closed(viewer):
-
-    arr = np.array([5] * dvrk_num_dofs, dtype=np.float32)
-    gym.apply_actor_dof_efforts(envs[0], handles[0], arr)
-
-    print(gym.get_env_rigid_contact_forces(envs[0]))
 
     # Step the physics
     gym.simulate(sim)
