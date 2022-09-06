@@ -6,7 +6,7 @@ physics_engine: flex
 env:
   numEnvs: ${resolve_default:64,${...num_envs}}
   envSpacing: 1.5
-  episodeLength: 300
+  episodeLength: 100000
 
   dvrkDofNoise: 0.1
   actionScale: 100
@@ -17,15 +17,23 @@ sim:
   up_axis: "z"
   use_gpu_pipeline: ${eq:${...pipeline},"cpu"}
   gravity: [0.0, 0.0, -9.81]
+
+  stress_visualization: True
+  stress_visualization_min: 1.0
+  stress_visualization_max: 1e5
+
   flex:
     solver_type: 5
-    num_outer_iterations: 4
+    num_outer_iterations: 5
     num_inner_iterations: 20
-    relaxation: 0.8
-    warm_start: 0.5
-    contact_regularization: 0.001
-    shape_collision_distance: 0.001
-    shape_collision_margin: 0.001
+    relaxation: 0.75
+    warm_start: 0.8
+    deterministic_mode: True
+    dynamic_friction: 0.7
+
+    shape_collision_distance: 5e-4
+    contact_regularization: 1.0e-6
+    shape_collision_margin: 1.0e-4
   
 task:
   randomize: False

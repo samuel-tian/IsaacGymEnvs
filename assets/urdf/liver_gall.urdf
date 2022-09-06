@@ -9,8 +9,8 @@
     <poissons value="0.45" />
     <damping value="1000" />
     <attachDistance value="0.0" />
-    <tetmesh filename="Liver_287f.obj_.tet" />
-    <scale value="2.0"/>
+    <tetmesh filename="liver_gall.obj_.tet" />
+    <scale value="0.01"/>
   </fem>
 </link>
 <link name="fix_frame">

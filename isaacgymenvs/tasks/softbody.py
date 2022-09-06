@@ -101,7 +101,7 @@ class SoftBody(VecTask):
             os.path.dirname(os.path.abspath(__file__)),
             "../../assets")
         dvrk_asset_file = "urdf/dvrk_description/psm/psm_for_issacgym.urdf"
-        soft_asset_file = "urdf/Liver.urdf"
+        soft_asset_file = "urdf/organs/liver_gall.urdf"
 
         # configure and load dvrk asset
         asset_options = gymapi.AssetOptions()
@@ -151,7 +151,7 @@ class SoftBody(VecTask):
         dvrk_pose2.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
         # configure and load deformable asset
-        soft_thickness = 0.01
+        soft_thickness = 0.1
         asset_options = gymapi.AssetOptions()
         asset_options.fix_base_link = True
         asset_options.thickness = soft_thickness
@@ -165,8 +165,8 @@ class SoftBody(VecTask):
 
         # set soft object pose
         soft_pose = gymapi.Transform()
-        soft_pose.p = gymapi.Vec3(0.0, 0.5, 0.1)
-        rot = axisangle2quat(torch.tensor([np.pi/3, 0, 0], dtype=torch.float32))
+        soft_pose.p = gymapi.Vec3(0.0, 0.5, 0.2)
+        rot = axisangle2quat(torch.tensor([np.pi/3, np.pi, 0], dtype=torch.float32))
         soft_pose.r = gymapi.Quat(*rot.numpy().tolist())
         
         # setup env grid
