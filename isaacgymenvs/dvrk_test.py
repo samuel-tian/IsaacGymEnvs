@@ -110,8 +110,7 @@ asset_root = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "../assets/")
 dvrk_asset_file = "urdf/dvrk_description/psm/psm_for_issacgym.urdf"
-# dvrk_asset_file = "urdf/franka_description/robots/franka_panda.urdf"
-soft_asset_file = "urdf/Liver.urdf"
+soft_asset_file = "urdf/organs/liver_gall.urdf"
 
 asset_options = gymapi.AssetOptions()
 asset_options.fix_base_link = False
@@ -135,36 +134,6 @@ print("Loading asset '%s' from '%s'" % (soft_asset_file, asset_root))
 soft_asset = gym.load_asset(
     sim, asset_root, soft_asset_file, asset_options)
 
-asset_soft_body_count = gym.get_asset_soft_body_count(soft_asset)
-asset_soft_materials = gym.get_asset_soft_materials(soft_asset)
-print('Soft Material Properties:')
-for i in range(asset_soft_body_count):
-    mat = asset_soft_materials[i]
-    print(f'(Body {i}) youngs: {mat.youngs} poissons: {mat.poissons} damping: {mat.damping}')
-
-# get joint limits and ranges for dvrk
-dvrk_dof_props = gym.get_asset_dof_properties(dvrk_asset)
-dvrk_lower_limits = dvrk_dof_props['lower']
-dvrk_upper_limits = dvrk_dof_props['upper']
-for i in (zip(dvrk_lower_limits, dvrk_upper_limits)):
-    print(i)
-dvrk_mids = 0.5 * (dvrk_upper_limits + dvrk_lower_limits)
-dvrk_num_dofs = len(dvrk_dof_props)
-
-# set default DOF states
-default_dof_state = np.zeros(dvrk_num_dofs, gymapi.DofState.dtype)
-default_dof_state["pos"][:] = dvrk_mids[:]
-
-# set DOF control properties (except grippers)
-dvrk_dof_props["driveMode"][:].fill(gymapi.DOF_MODE_EFFORT)
-dvrk_dof_props["stiffness"][:].fill(100.0)
-dvrk_dof_props["damping"][:].fill(100.0)
-
-# set DOF control properties for grippers
-dvrk_dof_props["driveMode"][8:].fill(gymapi.DOF_MODE_POS)
-dvrk_dof_props["stiffness"][8:].fill(800.0)
-dvrk_dof_props["damping"][8:].fill(40.0)
-
 # Set up the env grid
 num_envs = args.num_envs
 num_per_row = int(math.sqrt(num_envs))
@@ -178,25 +147,18 @@ pose.p = gymapi.Vec3(0.3, 0, 0.02)
 pose.r = gymapi.Quat(0, 0, 0, 1.0)
 
 soft_pose = gymapi.Transform()
-soft_pose.p = gymapi.Vec3(0, 0.5, 0.06)
+soft_pose.p = gymapi.Vec3(0.0, 0.7, 0.2)
 rot = axisangle2quat(torch.tensor([np.pi/3, 0, 0], dtype=torch.float32))
 soft_pose.r = gymapi.Quat(*rot.numpy().tolist())
 
 print("Creating %d environments" % num_envs)
 
 envs = []
-handles = []
 
 for i in range(num_envs):
     # Create env
     env = gym.create_env(sim, env_lower, env_upper, num_per_row)
     envs.append(env)
-
-    # Add dvrk
-    dvrk_handle = gym.create_actor(env, dvrk_asset, pose, "dvrk", i, 1)
-    handles.append(dvrk_handle)
-    gym.set_actor_dof_states(env, dvrk_handle, default_dof_state, gymapi.STATE_ALL)
-    gym.set_actor_dof_properties(env, dvrk_handle, dvrk_dof_props)
 
     # add soft object
     soft_handle = gym.create_actor(env, soft_asset, soft_pose, "soft", i, 2)

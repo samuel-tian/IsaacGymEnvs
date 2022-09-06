@@ -49,6 +49,7 @@ from .trifinger import Trifinger
 
 from .testenv import TestEnv
 from .softbody import SoftBody
+from .one_arm_reach import OneArmReach
 
 # Mappings from strings to environments
 isaacgym_task_map = {
@@ -73,4 +74,5 @@ isaacgym_task_map = {
     "Trifinger": Trifinger,
     "TestEnv": TestEnv,
     "SoftBody": SoftBody,
+    "OneArmReach": OneArmReach,
 }

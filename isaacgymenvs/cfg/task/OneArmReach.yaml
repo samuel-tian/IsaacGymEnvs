@@ -1,0 +1,35 @@
+name: OneArmReach
+
+physics_engine: flex
+
+# if given, will override the device setting in gym. 
+env:
+  numEnvs: ${resolve_default:64,${...num_envs}}
+  envSpacing: 1.5
+  episodeLength: 300
+
+  dvrkDofNoise: 0.1
+  actionScale: 100
+
+sim:
+  dt: 0.0166
+  substeps: 3
+  up_axis: "z"
+  use_gpu_pipeline: ${eq:${...pipeline},"cpu"}
+  gravity: [0.0, 0.0, -9.81]
+
+  flex:
+    solver_type: 5
+    num_outer_iterations: 5
+    num_inner_iterations: 20
+    relaxation: 0.75
+    warm_start: 0.8
+    deterministic_mode: True
+    dynamic_friction: 0.7
+
+    shape_collision_distance: 5e-4
+    contact_regularization: 1.0e-6
+    shape_collision_margin: 1.0e-4
+  
+task:
+  randomize: False
