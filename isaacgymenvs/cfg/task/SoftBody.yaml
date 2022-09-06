@@ -6,7 +6,7 @@ physics_engine: flex
 env:
   numEnvs: ${resolve_default:64,${...num_envs}}
   envSpacing: 1.5
-  episodeLength: 100000
+  episodeLength: 300
 
   dvrkDofNoise: 0.1
   actionScale: 100

@@ -199,7 +199,7 @@ class OneArmReach(VecTask):
         self.refresh(torch.arange(self.num_envs, device=self.device))
 
         self.soft_state_reset = False
-        self.init_soft_state = torch.clone(self.particle_state)
+        self.init_soft_state = torch.clone(self.particle_state[0])
         
         # initialize actions
         self.pos_control = np.zeros((self.num_envs, self.num_robots, self.num_dofs), dtype=np.float32)
@@ -209,7 +209,7 @@ class OneArmReach(VecTask):
         self.arm_control = self.effort_control[:, :, :8]
         self.gripper_control = self.pos_control[:, :, 8:10]
 
-        self.global_indices = torch.arange(self.num_envs * 3,
+        self.global_indices = torch.arange(self.num_envs * (self.num_robots + 1), # states for robots and liver
                                            dtype=torch.int32,
                                            device=self.device).view(self.num_envs, -1)
 
@@ -266,7 +266,8 @@ class OneArmReach(VecTask):
 
         if (not self.soft_state_reset and not first_reset):
             print("RESETING INITIAL SOFT STATE")
-            self.init_soft_state = torch.clone(self.particle_state)
+            print(self.particle_state)
+            self.init_soft_state = torch.clone(self.particle_state[0])
             self.soft_state_reset = True
 
         success_envs = []
@@ -277,6 +278,7 @@ class OneArmReach(VecTask):
             print("SUCCESSFUL", success_envs)
 
         # reset robots
+        print("reseting dvrk robots")
         for r in range(self.num_robots):
             reset_noise = np.random.rand(len(env_ids), self.num_dofs)
             pos = np.clip(
@@ -294,13 +296,8 @@ class OneArmReach(VecTask):
             # deploy updates
             for i in range(len(env_ids)):
                 env = env_ids[i]
-
-                if r == 0:
-                    dof_state = self.dvrk_dof_state
-                    handle = self.dvrk_handles[env]
-                else:
-                    dof_state = self.reach_dof_state
-                    handle = self.reach_handles[env]
+                dof_state = self.dvrk_dof_state
+                handle = self.dvrk_handles[env]
 
                 for j in range(self.num_dofs):
                     dof_state[env][j]['pos'] = pos[i][j]
@@ -312,13 +309,19 @@ class OneArmReach(VecTask):
                 self.gym.set_actor_dof_states(self.envs[env], handle, dof_state, gymapi.STATE_ALL)
 
         # reset soft body
-        soft_ids = self.global_indices[env_ids, -1].flatten()
-        self.gym.set_particle_state_tensor_indexed(
-            self.sim,
-            gymtorch.unwrap_tensor(self.init_soft_state),
-            gymtorch.unwrap_tensor(soft_ids),
-            len(soft_ids)
-        )
+        if not first_reset:
+            print("reseting liver asset")
+            soft_ids = self.global_indices[env_ids, -1].flatten()
+            soft_state = torch.zeros_like(self.particle_state)
+            soft_state[env_ids] = self.init_soft_state[:]
+            self.gym.set_particle_state_tensor_indexed(
+                self.sim,
+                gymtorch.unwrap_tensor(soft_state),
+                gymtorch.unwrap_tensor(soft_ids),
+                len(soft_ids)
+            )
+
+        print("reset complete")
         
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
@@ -356,9 +359,6 @@ class OneArmReach(VecTask):
     
 
     def compute_reward(self, actions):
-        target = self.init_soft_state[0, -1, :3]
-        target = torch.clone(target)
-        target[2] = target[2] + 0.5
         self.rew_buf[:], self.reset_buf[:] = compute_dvrk_reward(
             self.reset_buf,
             self.progress_buf,
