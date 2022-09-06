@@ -54,7 +54,7 @@ class OneArmReach(VecTask):
         self.action_scale = self.cfg['env']['actionScale']
         self.dvrk_dof_noise = self.cfg['env']['dvrkDofNoise']
 
-        self.cfg['env']['numObservations'] = 20
+        self.cfg['env']['numObservations'] = 2660
         self.cfg['env']['numActions'] = 9
         self.num_robots = 1
 
@@ -249,14 +249,15 @@ class OneArmReach(VecTask):
             'dvrk_eef_quat': torch.tensor(self.eef_quat[:, 0]),
             'dvrk_eef_vel': torch.tensor(self.eef_vel[:, 0]),
 
-            'soft_pos': self.particle_state[:, -1, :3],
+            'soft_pos': self.particle_state[:, :, :3],
         })
 
 
     def compute_observations(self):
         self.refresh(torch.arange(self.num_envs, device=self.device))
-        obs = ["dvrk_eef_pos", "dvrk_eef_quat", "dvrk_q", "soft_pos"]
+        obs = ["dvrk_eef_pos", "dvrk_eef_quat", "dvrk_q"]
         self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
+        self.obs_buf = torch.cat([self.obs_buf, self.states["soft_pos"].flatten(1, -1)], dim=-1)
         
         return self.obs_buf
     
@@ -373,7 +374,7 @@ def compute_dvrk_reward(reset_buf, progress_buf, actions, states, max_episode_le
 
     dvrk_pos = states['dvrk_eef_pos']
     dvrk_vel = states['dvrk_eef_vel']
-    current_soft_pos = states['soft_pos']
+    current_soft_pos = states['soft_pos'][:, 0, :]
 
     d_to_soft_reward = torch.norm(dvrk_pos - current_soft_pos, dim=-1)
     vel_reward = torch.norm(dvrk_vel, dim=-1)
@@ -383,6 +384,8 @@ def compute_dvrk_reward(reset_buf, progress_buf, actions, states, max_episode_le
 
     rewards = (dvrk_to_soft_scale * d_to_soft_reward +
                zero_vel_scale * vel_reward)
+
+    print(dvrk_pos[0], current_soft_pos[0], rewards[0])
 
     finished_epsilon = -0.1
     reset = torch.where((progress_buf >= max_episode_length - 1) | (rewards > finished_epsilon),
